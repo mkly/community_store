@@ -20,113 +20,144 @@ class Cart
     // if force set to true, will get cart details fresh, useful if programatically adding things to the cart
     public static function getCart($force = false)
     {
-        // this acts as a singleton, in that it wil only fetch the cart from the session and check it for validity once per request
-        if (!isset(self::$cart) || $force) {
-            $cart = Session::get('communitystore.cart');
-            if (!is_array($cart)) {
-                Session::set('communitystore.cart', array());
-                $cart = array();
-            }
-
-            $checkeditems = array();
-            $update = false;
-            // loop through and check if product hasn't been deleted. Remove from cart session if not found.
-            foreach ($cart as $cartitem) {
-                $product = StoreProduct::getByID((int) $cartitem['product']['pID']);
-
-                if ($product) {
-                    // check that we dont have a non-quantity product in cart with a quantity > 1
-                    if (!$product->allowQuantity() && $cartitem['product']['qty'] > 1) {
-                        $cartitem['product']['qty'] = 1;
-                        $update = true;
-                    }
-
-                    $include = true;
-
-                    if ($cartitem['product']['variation']) {
-                        if (!StoreProductVariation::getByID($cartitem['product']['variation'])) {
-                            $include = false;
-                            $update = true;
-                        } else {
-                            $product->shallowClone = true;
-                            $product = clone $product;
-                            $product->setVariation($cartitem['product']['variation']);
-                        }
-                    }
-
-                    // if the cart has greater stock than available
-                    if (!$product->isUnlimited() && !$product->allowBackOrders() && $cartitem['product']['qty'] > $product->getQty()) {
-                        if ($product->getQty() > 0) {
-                            $cartitem['product']['qty'] = $product->getQty(); // set to how many are left
-                        } else {
-                            $include = false; // otherwise none left, remove from cart
-                        }
-                        $update = true;  
-                    }
-
-                    if ($include) {
-                        $cartitem['product']['object'] = $product;
-                        $checkeditems[] = $cartitem;
-                    }
-                } else {
-                    $update = true;
-                }
-            }
-
-            if ($update) {
-                Session::set('communitystore.cart', $checkeditems);
-                self::$hasChanged = true;
-            }
-
-            self::$discounts = array();
-
-            $rules = StoreDiscountRule::findAutomaticDiscounts();
-
-            $code = trim(Session::get('communitystore.code'));
-            if ($code) {
-                $coderules = StoreDiscountRule::findDiscountRuleByCode($code);
-
-                if (count($coderules)) {
-                    $rules = array_merge($rules, $coderules);
-                } else {
-                    Session::set('communitystore.code', '');
-                }
-            }
-
-            if (count($rules) > 0) {
-                foreach($rules as $rule) {
-                    $discountProductGroups = $rule->getProductGroups();
-                    $include = true;
-                    $matchingprods = array();
-
-                    foreach($checkeditems as $key=>$cartitem) {
-                        $cartitem['product']['object']->addDiscountRules($rules);
-                    }
-
-                    if (!empty($discountProductGroups)) {
-                        $include = false;
-                        foreach($checkeditems as $cartitem) {
-                            $groupids = $cartitem['product']['object']->getGroupIDs();
-
-                            if (count(array_intersect($discountProductGroups,$groupids)) > 0) {
-                                $include = true;
-                            }
-                        }
-                    }
-
-                    if ($include) {
-
-                        self::$discounts[] = $rule;
-                    }
-                }
-            }
-
-
-
-            self::$cart = $checkeditems;
+        // Already calculated and not forced
+        if (!isset(static::$cart) && !$force) {
+            return static::$cart;
         }
 
-        return self::$cart;
+        static::$cart = Session::get('communitystore.cart');
+        if (!is_array(static::$cart)) {
+            Session::set('communitystore.cart', []);
+            static::$cart = [];
+
+            // Empty cart we're done
+            return static::$cart;
+        }
+
+        $resp = static::getCalculatedProducts(static::$cart);
+
+        static::$cart = $resp['cart'];
+        static::$hasChanged = $resp['hasChanged'];
+        if (static::$hasChanged) {
+            Session::set('communitystore.cart', static::$cart);
+        }
+
+        $discountResp = static::getCalculatedDiscounts(static::$cart, trim(Session::get('communitystore.code')));
+        static::$discounts = $resp['discounts'];
+        if ($resp['hasCodeRules'] === false) {
+            Session::set('communitystore.code', '');
+        }
+
+        // We only return the cart item part not discounts
+        return static::$cart;
+    }
+
+    public static function getCalculatedProducts($cartItems)
+    {
+        $resp = array(
+            'cart' => [],
+            'hasChanged' => false
+        );
+
+        // loop through and check if product hasn't been deleted.
+        foreach ($cartItems as $cartItem) {
+            $product = StoreProduct::getByID((int) $cartItem['product']['pID']);
+            if (!$product) {
+                $resp['hasChanged'] = true;
+                continue;
+            }
+
+            // Check that we dont have a non-quantity product in cart with a quantity > 1
+			// If we do just set it back to 1
+            if (!$product->allowQuantity() && $cartItem['product']['qty'] > 1) {
+                $cartitem['product']['qty'] = 1;
+                $cart['hasChanged'] = true;
+            }
+
+            $include = true;
+
+            if ($cartItem['product']['variation']) {
+                // Can't find product variation so we remove the product
+                if (!StoreProductVariation::getByID($cartItem['product']['variation'])) {
+                    $include = false;
+                    $resp['hasChanged'] = true;
+                } else {
+                    $product->shallowClone = true;
+                    $product = clone $product;
+                    $product->setVariation($cartitem['product']['variation']);
+                }
+            }
+
+            // If the cart has greater stock than available
+            if (!$product->isUnlimited() && !$product->allowBackOrders() && $cartItem['product']['qty'] > $product->getQty()) {
+                if ($product->getQty() > 0) {
+                    $cartItem['product']['qty'] = $product->getQty(); // set to how many are left
+                } else {
+                    $include = false; // otherwise none left, remove from cart
+                }
+                $resp['hasChanged'] = true;
+            }
+
+            if ($include) {
+                $cartItem['product']['object'] = $product;
+                $resp['cart'][] = $cartitem;
+            }
+        }
+
+        return $resp;
+    }
+
+
+    public function getCalculatedDiscounts($cartItems, $code = false, $user = null)
+    {
+        if ($user === null) {
+            $user = new \User;
+        }
+
+        $resp = [
+            'discounts' => [],
+            'hasCodeRules' => false
+        ];
+
+        $rules = StoreDiscountRule::findAutomaticDiscounts($user);
+
+        if ($code) {
+            $coderules = StoreDiscountRule::findDiscountRuleByCode($code, $user);
+
+            if (count($coderules)) {
+                $rules = array_merge($rules, $coderules);
+                $resp['hasCodeRules'] = true;
+            }
+        }
+
+        // No discounts we're done
+        if (count($rules) < 1) {
+            return $discounts;
+        }
+
+        foreach ($rules as $rule) {
+            $discountProductGroups = $rule->getProductGroups();
+
+            // Add discount rules and filter by product group restrictions
+            foreach ($checkedItems as $key => $cartItem) {
+                $cartitem['product']['object']->addDiscountRules($rules);
+
+                // No product group restrictions
+                if (empty($discountProductGroups)) {
+                    $discounts[] = $rule;
+
+                    continue;
+                }
+
+                $groupids = $cartItem['product']['object']->getGroupIDs();
+                // In a product group restriction
+                if (count(array_intersect($discountProductGroups, $groupids)) > 0) {
+                    $discounts[] = $rule;
+                }
+            }
+        }
+
+        return $discounts;
     }
 
     public static function hasChanged() {

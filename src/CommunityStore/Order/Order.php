@@ -465,15 +465,29 @@ class Order
      *
      * @return Order
      */
-    public static function add($pm, $transactionReference = '', $status = null)
-    {
-        $customer = new StoreCustomer();
+    public static function add(
+        $pm,
+        $transactionReference = '',
+        StoreCustomer $customer,
+        $cartItems = null,
+        StoreShippingMethod $shippingMethod = null,
+        $shippingInstructions = null
+    ) {
         $now = new \DateTime();
-        $smName = StoreShippingMethod::getActiveShippingLabel();
-        $sShipmentID = StoreShippingMethod::getActiveShipmentID();
-        $sRateID = StoreShippingMethod::getActiveRateID();
-        $sInstructions = StoreCart::getShippingInstructions();
-        $totals = StoreCalculator::getTotals();
+
+        $currentOffer = $shippingMethod->getCurrentOffer();
+        if ($currentOffer) {
+            $smName = $currentOffer->getLabel();
+            $sShipmentID = $currentOffer->getShipmentID();
+            $sRateID = $currentOffer->getRateID();
+        }
+
+        if ($shippingInstructions === null) {
+            $sInstructions = StoreCart::getShippingInstructions();
+        } else {
+            $sInstructions = $shippingInstructions;
+        }
+
         $shippingTotal = $totals['shippingTotal'];
         $taxes = $totals['taxes'];
         $total = $totals['total'];

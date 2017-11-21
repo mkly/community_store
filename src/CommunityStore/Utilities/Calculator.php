@@ -15,6 +15,7 @@ class Calculator
         if (!$cart) {
             $cart = StoreCart::getCart();
         }
+
         $subtotal = 0;
         if ($cart) {
             foreach ($cart as $cartItem) {
@@ -39,21 +40,25 @@ class Calculator
 
         return round(max($subtotal, 0), 2);
     }
-    public static function getShippingTotal($smID = null)
+
+    public static function getShippingTotal($smID = null, $cart = null)
     {
-        $cart = StoreCart::getCart();
+		if ($cart === null) {
+        	$cart = StoreCart::getCart();
+		}
+
         if (empty($cart)) {
-            return false;
+          	return false;
         }
 
-        $discounts = StoreCart::getDiscounts();
-
-        $existingShippingMethodID = Session::get('community_store.smID');
         if ($smID) {
             $shippingMethod = StoreShippingMethod::getByID($smID);
             Session::set('community_store.smID', $smID);
-        } elseif ($existingShippingMethodID) {
-            $shippingMethod = StoreShippingMethod::getByID($existingShippingMethodID);
+        } else {
+        	$existingShippingMethodID = Session::get('community_store.smID');
+			if ($existingShippingMethodID) {
+            	$shippingMethod = StoreShippingMethod::getByID($existingShippingMethodID);
+			}
         }
 
         if (is_object($shippingMethod) && $shippingMethod->getCurrentOffer()) {
@@ -76,14 +81,14 @@ class Calculator
     }
 
         // returns an array of formatted cart totals
-    public static function getTotals()
+    public static function getTotals($cart = null, $user = null, $smID = null)
     {
-        $subTotal = self::getSubTotal();
+        $subTotal = self::getSubTotal($cart, $user);
 
         $taxes = StoreTax::getTaxes();
 
-        $shippingTotal = self::getShippingTotal();
-        $discounts = StoreCart::getDiscounts();
+        $shippingTotal = self::getShippingTotal($smID);
+        $discounts = StoreCart::getCalculatedDiscounts($cart);
 
         $addedTaxTotal = 0;
         $includedTaxTotal = 0;
